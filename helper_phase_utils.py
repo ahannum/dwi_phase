@@ -112,54 +112,210 @@ def get_phs_diff(im):
     phs_std = np.sqrt(np.sum(phs_diff**2,axis = -1)/5)
 
     return phs_std,phs_diff
+
+def get_phs_diff_wholeData(im):
+    """
+    Calculate phase difference between each image rep and average phase
+    Input: complex image [x dim, y dim, diffusion dirs, reps]
+    Output: phs difference [x dim, y dim, diffusion dirs, reps]
     
+    """
+    # Calculate the phase
+    phs = np.angle(im)
+    # Divide by the average backgrond ( b=0) phase
+    im_adj = (np.exp(1j*phs))/np.nanmean(np.exp(1j*phs[:,:,:,0,:,:]),axis = -2)[:,:,:,np.newaxis,np.newaxis,:]
+    # Take the difference between each image rep and the average phase
+    phs_diff = im_adj / np.tile(np.nanmean(im_adj,axis = -2)[:,:,:,:,np.newaxis,:],(1,1,1,1,5,1))
+    # Calculate the standard deviation of the phase difference
+    phs_std = np.sqrt(np.sum(np.angle(phs_diff[:,:,:,:,:,:])**2,axis = -2)/5)
+
+    return phs_std,phs_diff
     
 
-def get_tempPhs_mean(motion, volunteer, diffusion,slice, directory):
+def load_image_allTD(motion,  volunteer, directory):
     inpath = os.path.join(directory,'V00'+str(volunteer),'3_DWI')
-
+    # Load only data for a given slice
     test = nib.load(os.path.join(inpath, 'M'+str(motion)+'_registered.nii'))
-    data = test.dataobj[:,:,slice,:] #load only the diffusion directions of interest from test variable
-    #load only the diffusion directions of interest from test variable
-
+    data = test.dataobj #load only the diffusion directions of interest from test variable
+    # Load Bvals and Bvecs
     bvals = np.loadtxt(os.path.join(inpath, 'M'+str(motion)+'_registered.bvals')) 
     bvecs = np.loadtxt(os.path.join(inpath, 'M'+str(motion)+'_registered.bvecs'))
-
+    # Load mask
     mask,header =  nrrd.read(os.path.join(inpath,  'M'+str(motion)+'_mask_new.nrrd'))
     mask = mask.astype('float')
     mask[mask==0] = np.nan
+    # Sort data
+    data1,bvals_sort,bvecs_sort = stacked2sorted(data,bvals,bvecs.T)
 
-    data1,bvals_sort,bvecs_sort = stacked2sorted(data[:,:,np.newaxis,:],bvals,bvecs.T)
+    ims = np.stack((data1[:,:,:,:,:5],data1[:,:,:,:,5:10],data1[:,:,:,:,10:15],
+                            data1[:,:,:,:,15:20],data1[:,:,:,:,20:25],data1[:,:,:,:,25:30],
+                            data1[:,:,:,:,30:35],data1[:,:,:,:,35:40]),axis = -1) 
+    # Get magnitude and phase temporal variation
+    phs_std,__ = get_phs_diff_wholeData(ims)
+    del ims,data1,data,bvals,bvecs
+    return phs_std, mask
 
-    ims = np.stack((data1[:,:,:,:5],data1[:,:,:,5:10],data1[:,:,:,10:15],
-                        data1[:,:,:,15:20],data1[:,:,:,20:25],data1[:,:,:,25:30],
-                        data1[:,:,:,30:35],data1[:,:,:,35:40]),axis = -1)
+
+
+def get_tempPhs_mean_std(motion, directory,list_vols ):
+    """
+    Calculate the mean and standard deviation of the phase standard deviation
+    Input: motion, td, diffusion, slice,directory
+    Output: Mean and Standard deviation for 10 volunteers and 8 timepoints[timepoints, volunteers]  
+    """
+    mean = np.zeros((6,4,8,10))
+    for vv in range(10):
+        volunteer = list_vols[vv]
+        image0,  mask  = load_image_allTD(motion,  volunteer, directory)
+        image = image0*mask[:,:,:,np.newaxis,np.newaxis]
+        mean[:,:,:,vv] = np.nanmean(image,axis = (0,1))
+        print('Finished volunteer '+str(vv+1)+'/10')
+
+    return mean
+
+
+def get_tempPhs_net_meanstd(directory,list_vols,motion):
+    print('Calculating Net Temporal Phase Std. Deviation for Motion',motion)
+    std_mean = np.zeros((4,6,8,10))
+    std_mean = get_tempPhs_mean_std(motion, directory,list_vols )
+    return std_mean
+    
 
 
     
 import scikit_posthocs as sp
 from scipy import stats
-def get_tempPhs_stats(std_m0,std_m1,std_2,sl,dd,td,alpha):
-    group1 = std_m0[sl,dd,td,:,0]
-    group2 = std_m1[sl,dd,td,:,1]
-    group3 = std_m2[sl,dd,td,:,2]
+def compute_statistics_motionComp(data,alpha):
+    """
+    Compute statistics for a given data set
+    Input: data [# volunteers, levels of motion compensation]
+    Output: hypothesis test results [groups,groups]
+    """
+    group1 = data[:,0]
+    group2 = data[:,1]
+    group3 = data[:,2]
 
-    normal = 0 if stats.shapiro(group1)[1] <alpha or stats.shapiro(group2)[1] <alpha or stats.shapiro(group1)[1] <alpha else 1
+    # Test for normality
+    tests = [stats.shapiro(group1)[1] <alpha,stats.shapiro(group2)[1] <alpha, stats.shapiro(group3)[1] <alpha]
+    if np.sum(tests) > 0:
+        normal = 0
+    else:
+        normal = 1
 
+    #normal = 0 if stats.shapiro(group1)[1] <alpha or stats.shapiro(group2)[1] <alpha or stats.shapiro(group1)[1] <alpha else 1
+
+    # If not normal, use non-parametric test
     if normal ==0:
         result = stats.friedmanchisquare(group1, group2, group3)
         if result[1] < alpha:
             test = sp.posthoc_wilcoxon([group1,group2,group3],p_adjust = 'holm-sidak')
             hypothesis = test
         else:
-            hypothesis = np.nan
-
+            hypothesis = np.empty((3,3,))
+            hypothesis[:] = np.nan  
+            
+    # If normal, use parametric test
     elif normal ==1:
         result = stats.f_oneway(group1, group2, group3)
         if result[1] < alpha:
             test = sp.posthoc_ttest([group1,group2,group3],p_adjust = 'holm-sidak')
             hypothesis = test 
         else:
-            hypothesis = np.nan
-    
+            hypothesis = np.empty((3,3,))
+            hypothesis[:] = np.nan  
+
+    return hypothesis
+
+
+def compute_statistics_slices(data,alpha):
+    """
+    Compute statistics for a given data set
+    Input: data [# volunteers, levels of motion compensation]
+    Output: hypothesis test results [groups,groups]
+    """
+    group1 = data[0,:]
+    group2 = data[1,:]
+    group3 = data[2,:]
+    group4 = data[3,:]
+    group5 = data[4,:]
+    group6 = data[5,:]
+
+    # Test for normality
+    tests = [stats.shapiro(group1)[1] <alpha,stats.shapiro(group2)[1] <alpha, stats.shapiro(group3)[1] <alpha, \
+        stats.shapiro(group4)[1] <alpha,stats.shapiro(group5)[1] <alpha, stats.shapiro(group6)[1] <alpha]
+    if np.sum(tests) > 0:
+        normal = 0
+    else:
+        normal = 1
+
+    #normal = 0 if stats.shapiro(group1)[1] <alpha or stats.shapiro(group2)[1] <alpha or stats.shapiro(group1)[1] <alpha or stats.shapiro(group4)[1] <alpha or \
+    #    stats.shapiro(group5)[1] <alpha or stats.shapiro(group6)[1] <alpha else 1
+
+    # If not normal, use non-parametric test
+    if normal ==0:
+        result = stats.friedmanchisquare(group1, group2, group3,group4,group5,group6)
+        if result[1] < alpha:
+            test = sp.posthoc_wilcoxon([group1,group2,group3,group4,group5,group6],p_adjust = 'holm-sidak')
+            hypothesis = test
+        else:
+            hypothesis = np.empty((6,6,))
+            hypothesis[:] = np.nan  
+            
+    # If normal, use parametric test
+    elif normal ==1:
+        result = stats.f_oneway(group1, group2, group3,group4,group5,group6,)
+        if result[1] < alpha:
+            test = sp.posthoc_ttest([group1,group2,group3,group4,group5,group6],p_adjust = 'holm-sidak')
+            hypothesis = test 
+        else:
+            hypothesis = np.empty((6,6,))
+            hypothesis[:] = np.nan  
+
+    return hypothesis
+
+
+
+def compute_statistics_timepoints(data,alpha):
+    """
+    Compute statistics for a given data set
+    Input: data [# volunteers, levels of motion compensation]
+    Output: hypothesis test results [groups,groups]
+    """
+    group1 = data[0,:]
+    group2 = data[1,:]
+    group3 = data[2,:]
+    group4 = data[3,:]
+    group5 = data[4,:]
+    group6 = data[5,:]
+    group7 = data[6,:]
+    group8 = data[7,:]
+
+    # Test for normality
+    tests = [stats.shapiro(group1)[1] <alpha,stats.shapiro(group2)[1] <alpha, stats.shapiro(group3)[1] <alpha, \
+        stats.shapiro(group4)[1] <alpha,stats.shapiro(group5)[1] <alpha, stats.shapiro(group6)[1] <alpha, \
+            stats.shapiro(group7)[1] <alpha,stats.shapiro(group8)[1] <alpha]
+    if np.sum(tests) > 0:
+        normal = 0
+    else:
+        normal = 1
+    # If not normal, use non-parametric test
+    if normal ==0:
+        result = stats.friedmanchisquare(group1, group2, group3,group4,group5,group6,group7,group8)
+        if result[1] < alpha:
+            test = sp.posthoc_wilcoxon([group1,group2,group3,group4,group5,group6,group7,group8],p_adjust = 'holm-sidak')
+            hypothesis = test
+        else:
+            hypothesis = np.empty((8,8,))
+            hypothesis[:] = np.nan  
+            
+    # If normal, use parametric test
+    elif normal ==1:
+        result = stats.f_oneway(group1, group2, group3,group4,group5,group6,group7,group8)
+        if result[1] < alpha:
+            test = sp.posthoc_ttest([group1,group2,group3,group4,group5,group6,group7,group8],p_adjust = 'holm-sidak')
+            hypothesis = test 
+        else:
+            hypothesis = np.empty((8,8,))
+            hypothesis[:] = np.nan  
+
     return hypothesis
