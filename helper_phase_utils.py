@@ -319,3 +319,121 @@ def compute_statistics_timepoints(data,alpha):
             hypothesis[:] = np.nan  
 
     return hypothesis
+
+def load_spatial_map(directory,volunteer,motion,slice,diffusion,td):
+    """
+    Load spatial map from file
+    Input: filepath
+    Output: spatial phase map
+    """
+    # Setup up filepath
+    inpath = os.path.join(directory,'V00'+str(volunteer),'3_DWI')
+    # Load spatial phase map ||phi||
+    filename = 'M'+str(motion)+'_slope.npy'
+    load_name = os.path.join(inpath,filename)
+    spatial_map = np.load(load_name)[:,:,slice,diffusion,:,td]
+    #Load mask
+    mask,__ =  nrrd.read(os.path.join(inpath,  'M'+str(motion)+'_mask_new.nrrd'))
+    mask = mask.astype('float')[:,:,slice]
+    mask[mask==0] = np.nan
+    # Get mean and standard deviation maps 
+    mean_map = np.nanmean(spatial_map*mask[:,:,np.newaxis],axis = -1)
+    std_map = np.nanstd(spatial_map*mask[:,:,np.newaxis],axis = -1)
+
+    #Load magnitude image
+    mag = abs(load_data(directory,volunteer,motion,slice,diffusion,td))
+
+    return mean_map, std_map,  np.nanmean(mag,axis = -1),mask,
+
+
+def load_data(directory,volunteer,motion,slice,diffusion,timepoint):
+    """
+    Load all data from file
+    Input: directory, volunteer, motion slice,diffusion,timepoint
+    Output: data [complex]
+    """
+    inpath = os.path.join(directory,'V00'+str(volunteer),'3_DWI')
+    # Load only data for a given slice
+    test = nib.load(os.path.join(inpath, 'M'+str(motion)+'_registered.nii'))
+    data = test.dataobj[:,:,slice,:] #load only the diffusion directions of interest from test variable
+    # Load Bvals and Bvecs
+    bvals = np.loadtxt(os.path.join(inpath, 'M'+str(motion)+'_registered.bvals')) 
+    bvecs = np.loadtxt(os.path.join(inpath, 'M'+str(motion)+'_registered.bvecs'))
+
+    # Sort data
+    data1,bvals_sort,bvecs_sort = stacked2sorted(data[:,:,np.newaxis,:],bvals,bvecs.T)
+
+    td0 = [0,5,10,15,20,25,30,35]
+    td1 = [5,10,15,20,25,30,35,40]
+    # Identify timmepoint to display
+    t0 = td0[timepoint]
+    t1 = td1[timepoint]
+
+    # Get magnitude and phase temporal variation
+    disp_im = np.squeeze(data1[:,:,:,:,t0:t1])[:,:,diffusion,:]
+
+    return disp_im
+
+def  get_spatialPhs_mean_std( directory,list_vols,motion ):
+
+    mean = np.zeros((6,4,8,10))
+    std = np.zeros((6,4,8,10))
+    for vv in range(10):
+        volunteer = list_vols[vv]
+        mean_map, std_map, mask  = load_spatial_map_allTD(directory,volunteer,motion)
+        image = mean_map*mask[:,:,:,np.newaxis,np.newaxis]
+        mean[:,:,:,vv] = np.nanmean(image,axis = (0,1))
+
+        image_std = std_map*mask[:,:,:,np.newaxis,np.newaxis]
+        std[:,:,:,vv] = np.nanmean(image_std,axis = (0,1))
+        print('Finished volunteer '+str(vv+1)+'/10')
+
+    return mean,std
+
+
+def load_spatial_map_allTD(directory,volunteer,motion):
+    """
+    Load spatial map from file
+    Input: filepath
+    Output: spatial phase map
+    """
+    # Setup up filepath
+    inpath = os.path.join(directory,'V00'+str(volunteer),'3_DWI')
+    # Load spatial phase map ||phi||
+    filename = 'M'+str(motion)+'_slope.npy'
+    load_name = os.path.join(inpath,filename)
+    spatial_map = np.load(load_name)
+    
+    #Load mask
+    mask,__ =  nrrd.read(os.path.join(inpath,  'M'+str(motion)+'_mask_new.nrrd'))
+    mask = mask.astype('float')
+    mask[mask==0] = np.nan
+    # Get mean and standard deviation maps 
+    mean_map = np.nanmean(spatial_map,axis = -2)
+    std_map = np.nanstd(spatial_map,axis = -2)
+
+    return mean_map, std_map, mask,
+
+
+def load_mag_allTD(directory,volunteer,motion):
+    """
+    Load all data from file
+    Input: directory, volunteer, motion slice,diffusion,timepoint
+    Output: data [complex]
+    """
+    inpath = os.path.join(directory,'V00'+str(volunteer),'3_DWI')
+    # Load only data for a given slice
+    test = nib.load(os.path.join(inpath, 'M'+str(motion)+'_registered.nii'))
+    data = test.dataobj #load only the diffusion directions of interest from test variable
+    # Load Bvals and Bvecs
+    bvals = np.loadtxt(os.path.join(inpath, 'M'+str(motion)+'_registered.bvals')) 
+    bvecs = np.loadtxt(os.path.join(inpath, 'M'+str(motion)+'_registered.bvecs'))
+
+    # Sort data
+    data1,bvals_sort,bvecs_sort = stacked2sorted(data,bvals,bvecs.T)
+
+    ims = np.stack((data1[:,:,:,:,:,:5],data1[:,:,:,:,:,5:10],data1[:,:,:,:,:,10:15],
+                            data1[:,:,:,:,:,15:20],data1[:,:,:,:,:,20:25],data1[:,:,:,:,:,25:30],
+                            data1[:,:,:,:,:,30:35],data1[:,:,:,:,:,35:40]),axis = -1) 
+
+    return abs(ims)
