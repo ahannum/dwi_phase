@@ -1,0 +1,269 @@
+
+import numpy as np
+import os
+from dipy.io.gradients import read_bvals_bvecs
+from dipy.io.image import load_nifti, save_nifti
+
+import nibabel as nib
+import nrrd
+
+import sys
+sys.path.append("/Users/arielhannum/Documents/Stanford/CMR-Setsompop/Code/cDTI_python")
+from mystic_mrpy.Data_Import.Diffusion   import *
+from mystic_mrpy.Data_Sorting.Diffusion  import *
+from mystic_mrpy.Diffusion.DWI  import *
+from mystic_mrpy.Diffusion.Gibbs         import *
+from mystic_mrpy.Diffusion.Registration  import *
+from mystic_mrpy.Diffusion.Rejection     import *
+from mystic_mrpy.Diffusion.Respiratory   import *
+from mystic_mrpy.Diffusion.Averaging     import *
+from mystic_mrpy.Diffusion.Denoising     import *
+from mystic_mrpy.Diffusion.Interpolation import *
+from mystic_mrpy.Diffusion.Segmentation_Matrix_DTI import *
+from mystic_mrpy.Diffusion.DTI import *
+from mystic_mrpy.Diffusion.cDTI import *
+
+def get_edge(img):
+    #define the vertical filter
+    vertical_filter = [[-1,-2,-1], [0,0,0], [1,2,1]]
+
+    #define the horizontal filter
+    horizontal_filter = [[-1,0,1], [-2,0,2], [-1,0,1]]
+
+    #get the dimensions of the image
+    n,m = img.shape
+
+    #initialize the edges image
+    edges_img = img.copy()
+
+    #loop over all pixels in the image
+    for row in range(3, n-2):
+        for col in range(3, m-2):
+
+            #create little local 3x3 box
+            local_pixels = img[row-1:row+2, col-1:col+2]
+
+            #apply the vertical filter
+            vertical_transformed_pixels = vertical_filter*local_pixels
+            #remap the vertical score
+            vertical_score = vertical_transformed_pixels.sum()/4
+
+            #apply the horizontal filter
+            horizontal_transformed_pixels = horizontal_filter*local_pixels
+            #remap the horizontal score
+            horizontal_score = horizontal_transformed_pixels.sum()/4
+
+            #combine the horizontal and vertical scores into a total edge score
+            edge_score = (vertical_score**2 + horizontal_score**2)**.5
+
+            #insert this edge score into the edges image
+            edges_img[row, col] = edge_score*2
+
+    #remap the values in the 0-1 range in case they went out of bounds
+    edges_img = edges_img/edges_img.max()
+    edges_img[edges_img ==0] = 'nan'
+    edges_img[edges_img >0] = 1
+    return edges_img
+
+def load_image(motion,  volunteer,diffusion,slice, directory):
+    inpath = os.path.join(directory,'V00'+str(volunteer),'DWI')
+    # Load only data for a given slice
+    test = nib.load(os.path.join(inpath, 'M'+str(motion)+'_registered.nii'))
+    #print(os.path.join(inpath, 'M'+str(motion)+'_registered.nii'))
+    data = test.dataobj[:,:,slice,:] #load only the diffusion directions of interest from test variable
+    # Load Bvals and Bvecs
+    bvals = np.loadtxt(os.path.join(inpath, 'M'+str(motion)+'_registered.bvals')) 
+    bvecs = np.loadtxt(os.path.join(inpath, 'M'+str(motion)+'_registered.bvecs'))
+    # Load mask
+    mask_LV,affine, voxsize = load_nifti(os.path.join(inpath, 'LV_M'+str(motion)+'.nii'), return_voxsize=True)
+    mask_BP,affine, voxsize = load_nifti(os.path.join(inpath, 'BP_M'+str(motion)+'.nii'), return_voxsize=True)
+    mask = (mask_LV-mask_BP).astype('float')
+    mask[mask==0] = np.nan
+    # Sort data
+    data1,bvals_sort,bvecs_sort = stacked2sorted(data[:,:,np.newaxis,:],bvals,bvecs.T)
+
+    if data1.shape[0] == 100:
+        disp_im = np.flip(np.squeeze(data1.transpose(1,0,2,3,4)),axis = 1)
+        mask = np.flip(mask.transpose(1,0,2),axis = 1)
+    else:
+        disp_im = np.squeeze(data1)
+        
+
+    # Get magnitude and phase temporal variation
+    mag = np.abs(disp_im)
+    phs_stds, phs_diffs = get_phs_diff(disp_im)
+
+    return phs_stds[:,:,diffusion], phs_diffs[:,:,diffusion], np.nanmean(mag[:,:,diffusion,:],axis = -1),mask[:,:,slice]
+
+def get_phs_diff(im):
+    """
+    Calculate phase difference between each image rep and average phase
+    Input: complex image [x dim, y dim, diffusion dirs, reps]
+    Output: phs difference [x dim, y dim, diffusion dirs, reps]
+    
+    """
+    # Calculate the phase
+    phs = np.angle(im)
+    # Divide by the average backgrond ( b=0) phase
+    im_adj = (np.exp(1j*phs))/np.nanmean(np.exp(1j*phs),axis = -1)[:,:,:,np.newaxis]
+    # Take the difference between each image rep and the average phase
+    phs_diff = np.angle(im_adj / np.tile(np.nanmean(im_adj,axis = -1)[:,:,:,np.newaxis],(1,1,1,im_adj.shape[-1])))
+    # Calculate the standard deviation of the phase difference
+    phs_std = np.sqrt(np.sum(phs_diff**2,axis = -1)/5)
+
+    return phs_std,phs_diff
+
+
+def get_phs_diff_wholeData(im):
+    """
+    Calculate phase difference between each image rep and average phase
+    Input: complex image [x dim, y dim, diffusion dirs, reps]
+    Output: phs difference [x dim, y dim, diffusion dirs, reps]
+    
+    """
+    # Calculate the phase
+    phs = np.angle(im)
+    # Divide by the average backgrond ( b=0) phase
+    im_adj = (np.exp(1j*phs))/np.nanmean(np.exp(1j*phs[:,:,:,0,:]),axis = -1)[:,:,:,np.newaxis,np.newaxis]
+    # Take the difference between each image rep and the average phase
+    phs_diff = im_adj / np.tile(np.nanmean(im_adj,axis = -1)[:,:,:,:,np.newaxis],(1,1,1,1,5))
+    # Calculate the standard deviation of the phase difference
+    phs_std = np.sqrt(np.sum(np.angle(phs_diff[:,:,:,:,:])**2,axis = -1)/5)
+
+    return phs_std,phs_diff
+
+def load_image_all(motion,  volunteer, directory):
+    inpath = os.path.join(directory,'V00'+str(volunteer),'DWI')
+    # Load only data for a given slice
+    test = nib.load(os.path.join(inpath, 'M'+str(motion)+'_registered.nii'))
+    #print(os.path.join(inpath, 'M'+str(motion)+'_registered.nii'))
+    data = test.dataobj #load only the diffusion directions of interest from test variable
+    # Load Bvals and Bvecs
+    bvals = np.loadtxt(os.path.join(inpath, 'M'+str(motion)+'_registered.bvals')) 
+    bvecs = np.loadtxt(os.path.join(inpath, 'M'+str(motion)+'_registered.bvecs'))
+    # Load mask
+    mask_LV,affine, voxsize = load_nifti(os.path.join(inpath, 'LV_M'+str(motion)+'.nii'), return_voxsize=True)
+    mask_BP,affine, voxsize = load_nifti(os.path.join(inpath, 'BP_M'+str(motion)+'.nii'), return_voxsize=True)
+    mask = (mask_LV-mask_BP).astype('float')
+    mask[mask==0] = np.nan
+    # Sort data
+    data1,bvals_sort,bvecs_sort = stacked2sorted(data,bvals,bvecs.T)
+
+    if data1.shape[0] == 100:
+        disp_im = np.flip(np.squeeze(data1.transpose(1,0,2,3,4)),axis = 1)
+        mask = np.flip(mask.transpose(1,0,2),axis = 1)
+    else:
+        disp_im = np.squeeze(data1)
+    # Get magnitude and phase temporal variation
+    phs_std,__ = get_phs_diff_wholeData(disp_im)
+    del disp_im,data1,data,bvals,bvecs
+    return phs_std, mask
+
+def get_tempPhs_mean_std(motion, directory,list_vols ):
+    """
+    Calculate the mean and standard deviation of the phase standard deviation
+    Input: motion, td, diffusion, slice,directory
+    Output: Mean and Standard deviation for 10 volunteers and 8 timepoints[timepoints, volunteers]  
+    """
+    mean = np.zeros((3,4,10))
+    for vv in range(10):
+        volunteer = list_vols[vv]
+        image0,  mask  = load_image_all(motion,  volunteer, directory)
+        image = image0*mask[:,:,:,np.newaxis]
+        mean[:,:,vv] = np.nanmean(image,axis = (0,1))
+        print('Finished volunteer '+str(vv+1)+'/10')
+
+    return mean
+
+
+def get_tempPhs_net_meanstd(directory,list_vols,motion):
+    print('Calculating Net Temporal Phase Std. Deviation for Motion',motion)
+    std_mean = get_tempPhs_mean_std(motion, directory,list_vols )
+    return std_mean
+    
+
+import scikit_posthocs as sp
+from scipy import stats
+def compute_statistics_motionComp(data,alpha):
+    """
+    Compute statistics for a given data set
+    Input: data [# volunteers, levels of motion compensation]
+    Output: hypothesis test results [groups,groups]
+    """
+    group1 = data[:,0]
+    group2 = data[:,1]
+    group3 = data[:,2]
+
+    # Test for normality
+    tests = [stats.shapiro(group1)[1] <alpha,stats.shapiro(group2)[1] <alpha, stats.shapiro(group3)[1] <alpha]
+    if np.sum(tests) > 0:
+        normal = 0
+    else:
+        normal = 1
+
+    #normal = 0 if stats.shapiro(group1)[1] <alpha or stats.shapiro(group2)[1] <alpha or stats.shapiro(group1)[1] <alpha else 1
+
+    # If not normal, use non-parametric test
+    if normal ==0:
+        result = stats.friedmanchisquare(group1, group2, group3)
+        if result[1] < alpha:
+            test = sp.posthoc_wilcoxon([group1,group2,group3],p_adjust = 'holm-sidak')
+            hypothesis = test
+        else:
+            hypothesis = np.empty((3,3,))
+            hypothesis[:] = np.nan  
+            
+    # If normal, use parametric test
+    elif normal ==1:
+        result = stats.f_oneway(group1, group2, group3)
+        if result[1] < alpha:
+            test = sp.posthoc_ttest([group1,group2,group3],p_adjust = 'holm-sidak')
+            hypothesis = test 
+        else:
+            hypothesis = np.empty((3,3,))
+            hypothesis[:] = np.nan  
+
+    return hypothesis
+
+def compute_statistics_slices(data,alpha):
+    """
+    Compute statistics for a given data set
+    Input: data [# volunteers, levels of motion compensation]
+    Output: hypothesis test results [groups,groups]
+    """
+    group1 = data[0,:]
+    group2 = data[1,:]
+    group3 = data[2,:]
+
+
+    # Test for normality
+    tests = [stats.shapiro(group1)[1] <alpha,stats.shapiro(group2)[1] <alpha, stats.shapiro(group3)[1] <alpha, ]
+    if np.sum(tests) > 0:
+        normal = 0
+    else:
+        normal = 1
+
+    #normal = 0 if stats.shapiro(group1)[1] <alpha or stats.shapiro(group2)[1] <alpha or stats.shapiro(group1)[1] <alpha or stats.shapiro(group4)[1] <alpha or \
+    #    stats.shapiro(group5)[1] <alpha or stats.shapiro(group6)[1] <alpha else 1
+
+    # If not normal, use non-parametric test
+    if normal ==0:
+        result = stats.friedmanchisquare(group1, group2, group3)
+        if result[1] < alpha:
+            test = sp.posthoc_wilcoxon([group1,group2,group3],p_adjust = 'holm-sidak')
+            hypothesis = test
+        else:
+            hypothesis = np.empty((3,3))
+            hypothesis[:] = np.nan  
+            
+    # If normal, use parametric test
+    elif normal ==1:
+        result = stats.f_oneway(group1, group2, group3)
+        if result[1] < alpha:
+            test = sp.posthoc_ttest([group1,group2,group3],p_adjust = 'holm-sidak')
+            hypothesis = test 
+        else:
+            hypothesis = np.empty((3,3,))
+            hypothesis[:] = np.nan  
+
+    return hypothesis
