@@ -267,3 +267,63 @@ def compute_statistics_slices(data,alpha):
             hypothesis[:] = np.nan  
 
     return hypothesis
+
+
+def load_spatial_map(directory,volunteer,motion,slice,diffusion):
+    """
+    Load spatial map from file
+    Input: filepath
+    Output: spatial phase map
+    """
+    # Setup up filepath
+    inpath = os.path.join(directory,'V00'+str(volunteer),'DWI')
+    # Load spatial phase map ||phi||
+    filename = 'M'+str(motion)+'_slope.npy'
+    load_name = os.path.join(inpath,filename)
+    spatial_map = np.load(load_name)[:,:,slice,diffusion,:]
+
+    # Load data to check original shape
+    test = nib.load(os.path.join(inpath, 'M'+str(motion)+'_registered.nii'))
+    data = test.dataobj[:,:,slice,:] #load only the diffusion directions of interest from test variable
+
+
+    # Get mean and standard deviation maps 
+    mean_map = np.nanmean(spatial_map,axis = -1)
+    std_map = np.nanstd(spatial_map,axis = -1)
+
+    if data.shape[0] == 100:
+        mean_map = np.flip(mean_map,axis = 1)
+        std_map = np.flip(std_map,axis = 1)
+
+    #Load magnitude image
+    mag = abs(load_data(directory,volunteer,motion,slice,diffusion))
+
+    return mean_map, std_map,  np.nanmean(mag,axis = -1),
+
+def load_data(directory,volunteer,motion,slice,diffusion):
+    """
+    Load all data from file
+    Input: directory, volunteer, motion slice,diffusion,timepoint
+    Output: data [complex]
+    """
+    inpath = os.path.join(directory,'V00'+str(volunteer),'DWI')
+    # Load only data for a given slice
+    test = nib.load(os.path.join(inpath, 'M'+str(motion)+'_registered.nii'))
+    data = test.dataobj[:,:,slice,:] #load only the diffusion directions of interest from test variable
+    # Load Bvals and Bvecs
+    bvals = np.loadtxt(os.path.join(inpath, 'M'+str(motion)+'_registered.bvals')) 
+    bvecs = np.loadtxt(os.path.join(inpath, 'M'+str(motion)+'_registered.bvecs'))
+
+    # Sort data
+    data1,bvals_sort,bvecs_sort = stacked2sorted(data[:,:,np.newaxis,:],bvals,bvecs.T)
+
+    if data1.shape[0] == 100:
+        disp_im1 = np.flip(np.squeeze(data1.transpose(1,0,2,3,4)),axis = 1)
+    else:
+        disp_im1 = np.squeeze(data1)
+
+
+    # Get magnitude and phase temporal variation
+    disp_im = np.squeeze(disp_im1[:,:,:,:,])[:,:,diffusion,:]
+
+    return disp_im
