@@ -327,3 +327,51 @@ def load_data(directory,volunteer,motion,slice,diffusion):
     disp_im = np.squeeze(disp_im1[:,:,:,:,])[:,:,diffusion,:]
 
     return disp_im
+
+
+def  get_spatialPhs_mean_std( directory,list_vols,motion):
+
+    mean = np.zeros((3,4,10))
+    std = np.zeros((3,4,10))
+    for vv in range(10):
+        volunteer = list_vols[vv]
+        mean_map, std_map, mask  = load_spatial_map_all(directory,volunteer,motion)
+        image = mean_map#*mask[:,:,:,np.newaxis]
+        mean[:,:,vv] = np.nanmean(image,axis = (0,1))
+
+        image_std = std_map#*mask[:,:,:,np.newaxis]
+        std[:,:,vv,3] = np.nanmean(image_std,axis = (0,1))
+        print('Finished volunteer '+str(vv+1)+'/10')
+
+    return mean,std
+
+def load_spatial_map_all(directory,volunteer,motion):
+    """
+    Load spatial map from file
+    Input: filepath
+    Output: spatial phase map
+    """
+    # Setup up filepath
+    inpath = os.path.join(directory,'V00'+str(volunteer),'DWI')
+    # Load spatial phase map ||phi||
+    filename = 'M'+str(motion)+'_slope.npy'
+    load_name = os.path.join(inpath,filename)
+    spatial_map = np.load(load_name)
+    
+    # Load mask
+    mask_LV,affine, voxsize = load_nifti(os.path.join(inpath, 'LV_M'+str(motion)+'.nii'), return_voxsize=True)
+    mask_BP,affine, voxsize = load_nifti(os.path.join(inpath, 'BP_M'+str(motion)+'.nii'), return_voxsize=True)
+    mask = (mask_LV-mask_BP).astype('float')
+    mask[mask==0] = np.nan 
+
+    if mask.shape[0] == 100:
+        mask = np.flip(np.squeeze(mask.transpose(1,0,2)),axis = 1)
+        spatial_map = np.flip(spatial_map,axis = 1)
+    else:
+        mask = np.squeeze(mask)
+
+    # Get mean and standard deviation maps 
+    mean_map = np.nanmean(spatial_map,axis = -1)
+    std_map = np.nanstd(spatial_map,axis = -1)
+
+    return mean_map, std_map, mask,
