@@ -1,29 +1,21 @@
-
-import numpy as np
-import os
+from Diffusion import stacked2sorted
 from dipy.io.gradients import read_bvals_bvecs
 from dipy.io.image import load_nifti, save_nifti
-
 import nibabel as nib
 import nrrd
-
+import numpy as np
+import os
+import scikit_posthocs as sp
+from scipy import stats
 import sys
-sys.path.append("/Users/arielhannum/Documents/Stanford/CMR-Setsompop/Code/cDTI_python")
-from mystic_mrpy.Data_Import.Diffusion   import *
-from mystic_mrpy.Data_Sorting.Diffusion  import *
-from mystic_mrpy.Diffusion.DWI  import *
-from mystic_mrpy.Diffusion.Gibbs         import *
-from mystic_mrpy.Diffusion.Registration  import *
-from mystic_mrpy.Diffusion.Rejection     import *
-from mystic_mrpy.Diffusion.Respiratory   import *
-from mystic_mrpy.Diffusion.Averaging     import *
-from mystic_mrpy.Diffusion.Denoising     import *
-from mystic_mrpy.Diffusion.Interpolation import *
-from mystic_mrpy.Diffusion.Segmentation_Matrix_DTI import *
-from mystic_mrpy.Diffusion.DTI import *
-from mystic_mrpy.Diffusion.cDTI import *
+
 
 def get_edge(img):
+    """
+    Function to get outline of image mask 
+    Input: image mask
+    Output: image mask outline
+    """
     #define the vertical filter
     vertical_filter = [[-1,-2,-1], [0,0,0], [1,2,1]]
 
@@ -66,6 +58,11 @@ def get_edge(img):
     return edges_img
 
 def load_image(motion,  volunteer,diffusion,slice, directory):
+    """
+    Load image data for a given volunteer, motion, diffusion direction and slice
+    Input: motion, volunteer, diffusion direction, slice, directory
+    Output: phase standard deviation msp, phase difference map, magnitude, mask
+    """
     inpath = os.path.join(directory,'V00'+str(volunteer),'DWI')
     # Load only data for a given slice
     test = nib.load(os.path.join(inpath, 'M'+str(motion)+'_registered.nii'))
@@ -133,6 +130,12 @@ def get_phs_diff_wholeData(im):
     return phs_std,phs_diff
 
 def load_image_all(motion,  volunteer, directory):
+    """
+    Load image data for a given volunteer, motion, and filepath
+    Input: motion, volunteer, diffusion direction, slice, directory
+    Output: phase standard deviation maps for volunteer,  mask
+    """
+
     inpath = os.path.join(directory,'V00'+str(volunteer),'DWI')
     # Load only data for a given slice
     test = nib.load(os.path.join(inpath, 'M'+str(motion)+'_registered.nii'))
@@ -182,8 +185,7 @@ def get_tempPhs_net_meanstd(directory,list_vols,motion):
     return std_mean
     
 
-import scikit_posthocs as sp
-from scipy import stats
+
 def compute_statistics_motionComp(data,alpha):
     """
     Compute statistics for a given data set
@@ -330,7 +332,11 @@ def load_data(directory,volunteer,motion,slice,diffusion):
 
 
 def  get_spatialPhs_mean_std( directory,list_vols,motion):
-
+    """
+    Get net mean spatial phase [mean and standard deviation] across all volunteers for a given motion compensation level
+    Input: filepath, list of volunteers, motion compensation 
+    Output: net spatial phase mean and standard deviation for a given slice, diffusion direction, and volunteer [3 slices, 4 directions, 10 volunteers]
+    """
     mean = np.zeros((3,4,10))
     std = np.zeros((3,4,10))
     for vv in range(10):

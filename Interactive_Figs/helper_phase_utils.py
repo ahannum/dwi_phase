@@ -1,30 +1,21 @@
-
-import numpy as np
-import os
+from Diffusion import stacked2sorted
 from dipy.io.gradients import read_bvals_bvecs
 from dipy.io.image import load_nifti, save_nifti
-
 import nibabel as nib
 import nrrd
-
+import numpy as np
+import os
+import scikit_posthocs as sp
+from scipy import stats
 import sys
-sys.path.append("/Users/arielhannum/Documents/Stanford/CMR-Setsompop/Code/cDTI_python")
-from mystic_mrpy.Data_Import.Diffusion   import *
-from mystic_mrpy.Data_Sorting.Diffusion  import *
-from mystic_mrpy.Diffusion.DWI  import *
-from mystic_mrpy.Diffusion.Gibbs         import *
-from mystic_mrpy.Diffusion.Registration  import *
-from mystic_mrpy.Diffusion.Rejection     import *
-from mystic_mrpy.Diffusion.Respiratory   import *
-from mystic_mrpy.Diffusion.Averaging     import *
-from mystic_mrpy.Diffusion.Denoising     import *
-from mystic_mrpy.Diffusion.Interpolation import *
-from mystic_mrpy.Diffusion.Segmentation_Matrix_DTI import *
-from mystic_mrpy.Diffusion.DTI import *
-from mystic_mrpy.Diffusion.cDTI import *
 
-from PIL import Image, ImageFilter
+
 def get_edge(img):
+    """
+    Function to get outline of image mask 
+    Input: image mask
+    Output: image mask outline
+    """
     #define the vertical filter
     vertical_filter = [[-1,-2,-1], [0,0,0], [1,2,1]]
 
@@ -67,6 +58,11 @@ def get_edge(img):
     return edges_img
 
 def load_image(motion, timepoint, volunteer,diffusion,slice, directory):
+    """
+    This function loads a single 2D image given volunteer, motion compensation level, timepoint, diffusion direction and slice
+    Input: motion compensation level, timepoint, volunteer, diffusion direction, slice, directory
+    Output: 2D image, mask
+    """
     inpath = os.path.join(directory,'V00'+str(volunteer),'3_DWI')
     # Load only data for a given slice
     test = nib.load(os.path.join(inpath, 'M'+str(motion)+'_registered.nii'))
@@ -134,6 +130,11 @@ def get_phs_diff_wholeData(im):
     
 
 def load_image_allTD(motion,  volunteer, directory):
+    """
+    This function loads the images for all timepoints for a given volunteer and motion compensation level
+    Input: motion compensation level, volunteer, directory
+    Output: Temporal phase standard deviation, mask
+    """
     inpath = os.path.join(directory,'V00'+str(volunteer),'3_DWI')
     # Load only data for a given slice
     test = nib.load(os.path.join(inpath, 'M'+str(motion)+'_registered.nii'))
@@ -176,16 +177,17 @@ def get_tempPhs_mean_std(motion, directory,list_vols ):
 
 
 def get_tempPhs_net_meanstd(directory,list_vols,motion):
+    """
+    Calculate the mean and standard deviation of the phase standard deviation
+    Input: motion, td, diffusion, slice,directory
+    Output: Mean Standard deviation for 10 volunteers and 8 timepoints[timepoints, volunteers]  
+    """
     print('Calculating Net Temporal Phase Std. Deviation for Motion',motion)
     std_mean = np.zeros((4,6,8,10))
     std_mean = get_tempPhs_mean_std(motion, directory,list_vols )
     return std_mean
     
 
-
-    
-import scikit_posthocs as sp
-from scipy import stats
 def compute_statistics_motionComp(data,alpha):
     """
     Compute statistics for a given data set
@@ -376,7 +378,12 @@ def load_data(directory,volunteer,motion,slice,diffusion,timepoint):
     return disp_im
 
 def  get_spatialPhs_mean_std( directory,list_vols,motion ):
-
+    """
+    Load spatial phase map from file
+    Input: filepath
+    Output: net spatial phase mean and standard deviation for a given volunteer, slice, diffusion direction, timepoint 
+    [6 slices, 4 directions, 8 TD, 10 volunteers]
+    """
     mean = np.zeros((6,4,8,10))
     std = np.zeros((6,4,8,10))
     for vv in range(10):
@@ -394,9 +401,9 @@ def  get_spatialPhs_mean_std( directory,list_vols,motion ):
 
 def load_spatial_map_allTD(directory,volunteer,motion):
     """
-    Load spatial map from file
+    Load spatial map from file for all TD
     Input: filepath
-    Output: spatial phase map
+    Output: spatial phase map [mean and standard deviation maps] for all TD 
     """
     # Setup up filepath
     inpath = os.path.join(directory,'V00'+str(volunteer),'3_DWI')
@@ -420,7 +427,7 @@ def load_mag_allTD(directory,volunteer,motion):
     """
     Load all data from file
     Input: directory, volunteer, motion slice,diffusion,timepoint
-    Output: data [complex]
+    Output: data [magnitude image] for all TD
     """
     inpath = os.path.join(directory,'V00'+str(volunteer),'3_DWI')
     # Load only data for a given slice
