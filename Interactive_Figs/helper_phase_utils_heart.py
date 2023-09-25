@@ -346,7 +346,7 @@ def  get_spatialPhs_mean_std( directory,list_vols,motion):
         mean[:,:,vv] = np.nanmean(image,axis = (0,1))
 
         image_std = std_map#*mask[:,:,:,np.newaxis]
-        std[:,:,vv,3] = np.nanmean(image_std,axis = (0,1))
+        std[:,:,vv] = np.nanmean(image_std,axis = (0,1))
         print('Finished volunteer '+str(vv+1)+'/10')
 
     return mean,std
