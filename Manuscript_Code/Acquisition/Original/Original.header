@@ -1,0 +1,16 @@
+Manufacturer:          SIEMENS
+Scanner Model:         Skyra
+Magnet Strength:       3 T
+Image Type:            Phase
+Patient ID:            sf_vs_iv
+Patient Age:           26
+Patient Sex:           M
+Patient Weight:        85.0 kg
+Body Part Examined:    HEART
+Slice Spacing:         N/A mm
+Echo Time:             85 ms
+Repetition Time:       310 ms
+Trigger Time:          280 ms
+Phase Encode Polarity: Positive
+Parallel Imaging:      2
+Partial Fourier:       8/8
