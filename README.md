@@ -1,10 +1,9 @@
 # dwi_phase
 # About
-This repository provides example code to accompany the manuscript "Phase Stabilization with Motion Compensation for Diffusion
-Weighted Imaging" (in prep)
+This repository provides example code to accompany the manuscript "Phase Stabilization with Motion Compensated Diffusion
+Weighted Imaging" (https://doi.org/10.1002/mrm.30218)
 
-** Abstract **
-
+# Overview
 The repository is divided into 2 sections: (1) Interactive Figures and (2) Manuscript Figures. Interactive Figures provide more self-guided interactive 
 tools to recreate the manuscript figures while the latter folder contains the original code used to generate the figures used in the manuscript. 
 
